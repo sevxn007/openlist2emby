@@ -1,0 +1,38 @@
+# Local configuration and editor state
+.DS_Store
+.idea/
+.vscode/
+.claude/
+.codex/
+.env
+.env.*
+!.env.example
+*.log
+*.bak
+*.bak-*
+
+# Runtime data and build output
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+data/
+backend/openlist2emby
+backend/dist/
+node_modules/
+.pnpm-store/
+.cache/
+dist/
+coverage/
+coverage.out
+*.test
+playwright-report/
+test-results/
+frontend/tmp/
+*.tsbuildinfo
+
+# Local deployment archives
+*.tar
+*.tar.gz
