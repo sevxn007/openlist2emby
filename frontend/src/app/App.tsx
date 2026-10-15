@@ -329,6 +329,8 @@ export function App() {
     ) : (
       <FileBrowser
         openListBaseURL={resolvedBaseURL}
+        mediaLibraryEnabled={mediaLibraryEnabled && isAdmin}
+        onTaskCreated={taskActivity.trackTaskRun}
       />
     )
 

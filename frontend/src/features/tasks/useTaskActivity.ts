@@ -14,6 +14,7 @@ import {
   getTaskPollingInterval,
   isTaskActive,
   isTaskTerminal,
+  isMediaImportRun,
 } from "./taskModel"
 
 export function useTaskActivity(enabled: boolean) {
@@ -87,6 +88,15 @@ export function useTaskActivity(enabled: boolean) {
           void queryClient.invalidateQueries({ queryKey: ["files"] })
         } else if (run.status === "failed") {
           toast.error(run.error?.message || t("music.embedFailed"))
+        }
+      }
+      if (isMediaImportRun(run)) {
+        void queryClient.invalidateQueries({ predicate: (query) =>
+          typeof query.queryKey[0] === "string" && query.queryKey[0].startsWith("media-libr") })
+        if (run.status === "succeeded") {
+          toast.success(t("files.importMediaCompleted"))
+        } else if (run.status === "failed") {
+          toast.error(run.error?.message || t("files.importMediaFailed"))
         }
       }
     }

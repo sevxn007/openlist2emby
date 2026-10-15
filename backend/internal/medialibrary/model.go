@@ -415,8 +415,9 @@ var (
 )
 
 type ScanPayload struct {
-	LibraryID   int64  `json:"library_id"`
-	LibraryName string `json:"library_name,omitempty"`
+	LibraryID   int64    `json:"library_id"`
+	LibraryName string   `json:"library_name,omitempty"`
+	Paths       []string `json:"paths,omitempty"`
 }
 
 type ScanResult struct {

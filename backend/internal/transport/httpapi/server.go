@@ -77,6 +77,7 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("PUT /api/manager/media-libraries/order", s.withAdmin(s.handleReorderMediaLibraries))
 	mux.Handle("DELETE /api/manager/media-libraries/{id}", s.withAdmin(s.handleDeleteMediaLibrary))
 	mux.Handle("POST /api/manager/media-libraries/{id}/scan", s.withAdmin(s.handleScanMediaLibrary))
+	mux.Handle("POST /api/manager/media-libraries/{id}/import", s.withAdmin(s.handleImportMediaLibrary))
 	mux.Handle("GET /api/manager/media-library/continue-watching", s.withAuth(s.handleContinueWatching))
 	mux.Handle("GET /api/manager/media-library/items", s.withAuth(s.handleListMediaLibraryItems))
 	mux.Handle("GET /api/manager/media-library/items/{id}", s.withAuth(s.handleGetMediaLibraryItem))

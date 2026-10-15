@@ -135,6 +135,13 @@ scan schedule in UTC, configurable in library settings. Tasks also support music
 metadata embedding (`music.embed_metadata`) and local metadata relocation
 (`media.metadata.relocate`). Closing the browser does not stop submitted work.
 
+To import new episodes without scanning the whole library, select files or
+folders in the file browser and choose **Import media**. Choose a target library
+containing all selected paths (a unique match is selected automatically). This
+refreshes only the selected subtrees or file parents and adds or updates their
+media without removing existing items. Progress and retries are available in
+Tasks; full scans still reconcile deleted files.
+
 The media library is disabled by default. Disabling it hides the library
 interface and returns HTTP 404 from media-library and Emby endpoints.
 

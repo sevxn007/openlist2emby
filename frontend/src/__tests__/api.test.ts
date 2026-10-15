@@ -41,6 +41,7 @@ import {
   reorderMediaLibraries,
   runTaskSchedule,
   scanMediaLibrary,
+  importMediaLibraryPaths,
   searchMedia,
   searchMusic,
   setupManager,
@@ -93,6 +94,15 @@ afterEach(() => {
 })
 
 describe("Manager API client", () => {
+  it("queues selected media paths through the Manager import endpoint", async () => {
+    fetchMock.mockResolvedValueOnce(mockEnvelope({ id: 81 }, 202))
+    const paths = ["/TV/Show/Show.S01E02.mkv", "/TV/Another Show"]
+    await importMediaLibraryPaths(7, paths)
+    expect(fetchMock).toHaveBeenCalledWith("/api/manager/media-libraries/7/import", expect.objectContaining({
+      method: "POST", body: JSON.stringify({ paths }), credentials: "include",
+    }))
+  })
+
   it("clears all completed task runs with one unfiltered request", async () => {
     fetchMock.mockResolvedValueOnce(mockEnvelope({ deleted: 25 }))
 

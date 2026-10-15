@@ -31,6 +31,11 @@ export function getTaskPollingInterval(hasActiveTask: boolean) {
   return hasActiveTask ? 1_000 : false
 }
 
+export function isMediaImportRun(run: Pick<TaskRun, "type" | "subject">) {
+  return run.type === "media.scan" && typeof run.subject === "object" && run.subject !== null &&
+    "paths" in run.subject && Array.isArray(run.subject.paths) && run.subject.paths.length > 0
+}
+
 export function getTaskSubject(
   run: Pick<TaskRun, "id" | "subject" | "type">,
   t: (
@@ -46,7 +51,7 @@ export function getTaskSubject(
 			typeof run.subject.library_name === "string" &&
 			run.subject.library_name.trim() !== ""
 		) {
-			return t("tasks.subject.mediaScan", {
+			return t(isMediaImportRun(run) ? "tasks.subject.mediaImport" : "tasks.subject.mediaScan", {
 				library: run.subject.library_name,
 			})
 		}

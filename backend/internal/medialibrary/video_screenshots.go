@@ -110,7 +110,7 @@ func (s *Service) videoSourceForItem(ctx context.Context, access UserAccess, tar
 	}
 }
 
-func (h *TaskHandler) captureMissingVideoScreenshots(ctx context.Context, library Library, client OpenList, result *ScanResult, execution task.Execution) error {
+func (h *TaskHandler) captureMissingVideoScreenshots(ctx context.Context, library Library, client OpenList, result *ScanResult, execution task.Execution, tracker *indexTracker) error {
 	if !library.VideoScreenshotEnabled || library.ContentType == ContentMusic {
 		return nil
 	}
@@ -118,7 +118,7 @@ func (h *TaskHandler) captureMissingVideoScreenshots(ctx context.Context, librar
 	if !ok || h.assets == nil || h.frames == nil || client == nil {
 		return nil
 	}
-	items, err := h.listLibraryItems(ctx, library.ID)
+	items, err := h.screenshotScanItems(ctx, library.ID, tracker)
 	if err != nil {
 		return err
 	}
@@ -181,6 +181,27 @@ func (h *TaskHandler) captureMissingVideoScreenshots(ctx context.Context, librar
 	return ctx.Err()
 }
 
+func (h *TaskHandler) screenshotScanItems(ctx context.Context, libraryID int64, tracker *indexTracker) ([]Item, error) {
+	if tracker == nil || !tracker.incremental {
+		return h.listLibraryItems(ctx, libraryID)
+	}
+	items := make([]Item, 0, len(tracker.added)+len(tracker.updated))
+	for _, ids := range []map[int64]struct{}{tracker.added, tracker.updated} {
+		for id := range ids {
+			item, err := h.store.GetMediaItem(ctx, id)
+			if err != nil {
+				return nil, err
+			}
+			// Existing parent artwork must keep its original episode source.
+			if _, added := tracker.added[id]; item.Kind.Folder() && !added {
+				continue
+			}
+			items = append(items, item)
+		}
+	}
+	return items, nil
+}
+
 func (h *TaskHandler) listLibraryItems(ctx context.Context, libraryID int64) ([]Item, error) {
 	const pageSize = 500
 	items := make([]Item, 0)
@@ -227,7 +248,10 @@ func (h *TaskHandler) videoScreenshotJobs(ctx context.Context, contentType Conte
 	}
 	sort.Slice(targetIDs, func(left, right int) bool { return targetIDs[left] < targetIDs[right] })
 	for _, targetID := range targetIDs {
-		target := itemsByID[targetID]
+		target, exists := itemsByID[targetID]
+		if !exists {
+			continue
+		}
 		source := targetSources[targetID]
 		if !h.needsAutomaticScreenshot(images[targetID][ImagePrimary], source) {
 			continue

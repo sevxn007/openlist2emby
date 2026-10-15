@@ -38,11 +38,11 @@ const runningRun: TaskRun = {
   updated_at: "2026-07-22T00:00:01Z",
 }
 
-function Harness() {
+function Harness({ run = runningRun }: { run?: TaskRun }) {
   const { activeTaskCount, trackTaskRun } = useTaskActivity(true)
   return (
     <>
-      <button type="button" onClick={() => trackTaskRun(runningRun)}>
+      <button type="button" onClick={() => trackTaskRun(run)}>
         Track
       </button>
       <span data-testid="active-count">{activeTaskCount}</span>
@@ -62,6 +62,19 @@ afterEach(() => {
 })
 
 describe("task activity", () => {
+  it.each(["succeeded", "failed"] as const)("notifies when a media import has %s", async (status) => {
+    const imported: TaskRun = {
+      ...runningRun, type: "media.scan", status,
+      subject: { library_id: 7, library_name: "Shows", paths: ["/TV/Show"] },
+    }
+    vi.spyOn(window, "fetch").mockImplementation(async (input) =>
+      String(input) === "/api/manager/tasks/runs/41" ? envelope(imported) : envelope({ items: [], total: 0 }))
+    renderWithProviders(<Harness run={imported} />)
+    await userEvent.click(screen.getByRole("button", { name: "Track" }))
+    await waitFor(() => expect(status === "succeeded" ? toastMocks.success : toastMocks.error)
+      .toHaveBeenCalledWith(status === "succeeded" ? "Media import completed" : "Unable to import media"))
+  })
+
   it("keeps tracking a created music task and notifies when it finishes", async () => {
     let activeListRequests = 0
     let detailRequests = 0

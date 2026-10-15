@@ -71,9 +71,10 @@ func (h *TaskHandler) SetAssetFiles(assets *AssetFiles) { h.assets = assets }
 func (h *TaskHandler) SetVideoFrameExtractor(frames VideoFrameExtractor) { h.frames = frames }
 
 type storedScanPayload struct {
-	LibraryID       int64  `json:"library_id"`
-	LibraryName     string `json:"library_name"`
-	OpenListBaseURL string `json:"openlist_base_url"`
+	LibraryID       int64    `json:"library_id"`
+	LibraryName     string   `json:"library_name"`
+	OpenListBaseURL string   `json:"openlist_base_url"`
+	Paths           []string `json:"paths,omitempty"`
 }
 
 func NewTaskHandler(store SettingsStore, clients ClientFactory, metadata MetadataProvider, music ...MusicMetadataProvider) *TaskHandler {
@@ -117,10 +118,15 @@ func (h *TaskHandler) Prepare(ctx context.Context, raw json.RawMessage) (json.Ra
 	if err != nil {
 		return nil, err
 	}
+	paths, err := normalizeImportPaths(library, input.Paths)
+	if err != nil {
+		return nil, task.NewPublicError("invalid_payload", err.Error(), http.StatusBadRequest, false, nil)
+	}
 	return json.Marshal(storedScanPayload{
 		LibraryID:       input.LibraryID,
 		LibraryName:     library.Name,
 		OpenListBaseURL: settings.OpenListBaseURL,
+		Paths:           paths,
 	})
 }
 
@@ -157,15 +163,26 @@ func (h *TaskHandler) Run(ctx context.Context, raw json.RawMessage, execution ta
 	if len(rootPaths) == 0 && library.RootPath != "" {
 		rootPaths = []string{library.RootPath}
 	}
-	files, scanProgress, err := DiscoverRoots(ctx, client, rootPaths, func(progress ScanProgress) {
+	reporter := func(progress ScanProgress) {
 		execution.Report(task.Progress{Stage: "scanning", Percent: 0, ScannedDirectories: progress.Directories, ScannedFiles: progress.Files})
-	})
+	}
+	incremental := len(payload.Paths) > 0
+	var files []DiscoveredFile
+	var scanProgress ScanProgress
+	if incremental {
+		files, scanProgress, err = DiscoverPaths(ctx, client, library, payload.Paths, reporter)
+	} else {
+		files, scanProgress, err = DiscoverRoots(ctx, client, rootPaths, reporter)
+	}
 	if err != nil {
 		return nil, err
 	}
-	generation, err := h.store.BeginLibraryScan(ctx, library.ID)
-	if err != nil {
-		return nil, err
+	generation := library.ScanGeneration
+	if !incremental {
+		generation, err = h.store.BeginLibraryScan(ctx, library.ID)
+		if err != nil {
+			return nil, err
+		}
 	}
 	supported := make([]DiscoveredFile, 0, len(files))
 	for _, file := range files {
@@ -175,6 +192,7 @@ func (h *TaskHandler) Run(ctx context.Context, raw json.RawMessage, execution ta
 	}
 	result := ScanResult{Directories: scanProgress.Directories, Files: scanProgress.Files}
 	tracker := newIndexTracker(&result)
+	tracker.incremental = incremental
 	switch library.ContentType {
 	case ContentMovies:
 		err = h.indexMovies(ctx, library, generation, supported, settings.TMDBAPIKey, settings.OpenListBaseURL, tracker, execution)
@@ -188,14 +206,16 @@ func (h *TaskHandler) Run(ctx context.Context, raw json.RawMessage, execution ta
 	if err != nil {
 		return nil, err
 	}
-	result.Removed, err = h.store.FinishLibraryScan(ctx, library.ID, generation)
-	if err != nil {
+	if !incremental {
+		result.Removed, err = h.store.FinishLibraryScan(ctx, library.ID, generation)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := h.captureMissingVideoScreenshots(ctx, library, client, &result, execution, tracker); err != nil {
 		return nil, err
 	}
-	if err := h.captureMissingVideoScreenshots(ctx, library, client, &result, execution); err != nil {
-		return nil, err
-	}
-	if store, ok := h.store.(LocalizedMetadataStore); ok && h.assets != nil {
+	if store, ok := h.store.(LocalizedMetadataStore); ok && h.assets != nil && !incremental {
 		paths, tags, referenceErr := store.ListMediaAssetReferences(ctx)
 		if referenceErr == nil {
 			_ = h.assets.GarbageCollect(paths, tags)
@@ -210,7 +230,7 @@ func (h *TaskHandler) PublicSummary(raw json.RawMessage) any {
 	if json.Unmarshal(raw, &payload) != nil {
 		return nil
 	}
-	return ScanPayload{LibraryID: payload.LibraryID, LibraryName: payload.LibraryName}
+	return ScanPayload{LibraryID: payload.LibraryID, LibraryName: payload.LibraryName, Paths: payload.Paths}
 }
 
 func (h *TaskHandler) indexMovies(ctx context.Context, library Library, generation int64, files []DiscoveredFile, apiKey, openListBaseURL string, tracker *indexTracker, execution task.Execution) error {
@@ -1323,6 +1343,7 @@ func applyPremiereDate(input *ItemInput, value string) {
 }
 
 type indexTracker struct {
+	incremental    bool
 	result         *ScanResult
 	added          map[int64]struct{}
 	updated        map[int64]struct{}
@@ -1358,6 +1379,10 @@ func (t *indexTracker) metadataFailed(id int64) {
 }
 
 func (h *TaskHandler) reassociateScannedItem(ctx context.Context, item Item, input ItemInput, tracker *indexTracker) (Item, error) {
+	// A partial discovery cannot establish that an older path has disappeared.
+	if tracker.incremental {
+		return item, nil
+	}
 	store, ok := h.store.(MediaItemReassociationStore)
 	if !ok {
 		return item, nil

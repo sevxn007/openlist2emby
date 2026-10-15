@@ -294,18 +294,33 @@ filesystem operation, not a SQLite schema migration.
 
 ### Media Library Scan Task
 
-`media.scan` recursively indexes every configured OpenList root in a media
+Without selected paths, `media.scan` recursively indexes every OpenList root in a media
 library as movies, TV shows, or music. A library must have at least one root;
-its roots must be absolute, unique, and non-overlapping. Every directory
-listing is requested with OpenList refresh enabled. While discovering a large
+its roots must be absolute, unique, and non-overlapping. Full scans allow cached
+OpenList directory listings. While discovering a large
 tree, the task reports cumulative scanned directory and file counts even though
 the indexing percentage cannot be known yet. It then reports percentage progress
 while indexing supported files.
 
+Administrators can submit selected paths to
+`POST /api/manager/media-libraries/{id}/import`, for example
+`{"paths":["/TV/Show/Season 01/Show.S01E02.mkv","/TV/Another Show"]}`.
+The nonempty `paths` array accepts up to 1000 absolute paths within the target
+library's roots. Duplicate or overlapping selections are collapsed, and current
+root boundaries are checked again when the task runs. Incremental imports refresh
+only selected subtrees or file parents while retaining the original library-relative
+hierarchy. They reuse identification, metadata, and indexing without advancing the
+full-scan generation, deleting unselected items, or reassociating identities based
+on presumed missing paths. Screenshots cover only affected media and new parents;
+global asset cleanup is skipped. Full scans still reconcile deleted files.
+Manual scans, scheduled scans, and imports for the same library are claimed
+serially; different libraries can run concurrently. Task subjects include `paths`,
+and closing the browser does not interrupt a queued import.
+
 Movie and TV show scans parse titles, seasons, and episodes and enrich them with
 the configured TMDB or TVDB source. Existing items reuse stored
 metadata until the source file modification time or source selection changes; manually edited
-metadata stays locked during later scans. Music scans index each audio file as an individual song. A successful scan commits a new
+metadata stays locked during later scans. Music scans index each audio file as an individual song. A successful full scan commits a new
 generation and removes items no longer present. Its result records added,
 updated, removed, directory, file, metadata-failure, screenshot-success, and
 screenshot-failure counts. When a movie or TV library enables video screenshots,
@@ -387,7 +402,8 @@ The Manager media-library routes are:
 | `GET`, `POST`          | `/api/manager/media-libraries`                                 | List visible libraries or create one; administrators may use `include_hidden=true` to list every library |
 | `GET`, `PUT`, `DELETE` | `/api/manager/media-libraries/{id}`                            | Read, replace, or delete one library                                                                     |
 | `GET`, `PUT`           | `/api/manager/media-libraries/{id}/scan-schedule`              | Read or replace the library's unique Cron scan schedule                                                  |
-| `POST`                 | `/api/manager/media-libraries/{id}/scan`                       | Queue a `media.scan` run                                                                                 |
+| `POST`                 | `/api/manager/media-libraries/{id}/scan`                       | Queue a full `media.scan` run                                                                            |
+| `POST`                 | `/api/manager/media-libraries/{id}/import`                     | Queue an incremental `media.scan` run for selected absolute `paths` (administrator only)                 |
 | `GET`                  | `/api/manager/media-library/items`                             | Search or browse indexed items                                                                           |
 | `GET`                  | `/api/manager/media-library/items/{id}`                        | Read one indexed item                                                                                    |
 | `GET`                  | `/api/manager/media-library/continue-watching`                 | Merge real resume items with one dynamically derived next episode per started series                     |

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/sevxn007/openlist2emby/backend/internal/medialibrary"
 	"github.com/sevxn007/openlist2emby/backend/internal/task"
 	"gorm.io/gorm"
 )
@@ -287,6 +288,13 @@ func (s *Store) ClaimRun(ctx context.Context, owner string, now, leaseUntil time
 		query := tx.Model(&taskRunModel{}).
 			Where("status = ? AND available_at <= ? AND cancel_requested_at IS NULL", task.StatusQueued, storedNow).
 			Where("schedule_id IS NULL OR schedule_id NOT IN (?)", runningSchedules)
+		// Full scans delete unseen generations. Serialize every scan/import for
+		// a library, including manual runs, before any worker reads its roots.
+		query = query.Where(`type <> ? OR NOT EXISTS (
+			SELECT 1 FROM task_runs AS active
+			WHERE active.type = ? AND active.status = ?
+			AND json_extract(active.payload_json, '$.library_id') = json_extract(task_runs.payload_json, '$.library_id')
+		)`, medialibrary.ScanTaskType, medialibrary.ScanTaskType, task.StatusRunning)
 		var candidate taskRunModel
 		if err := query.Order("available_at, id").First(&candidate).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {

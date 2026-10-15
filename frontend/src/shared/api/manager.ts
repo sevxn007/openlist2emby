@@ -969,6 +969,13 @@ export function scanMediaLibrary(id: number) {
 	})
 }
 
+export function importMediaLibraryPaths(id: number, paths: string[]) {
+	return requestManager<TaskRun>(`/api/manager/media-libraries/${id}/import`, {
+		method: "POST",
+		body: JSON.stringify({ paths }),
+	})
+}
+
 export function getMediaLibraryScanSchedule(id: number) {
 	return requestManager<TaskSchedule>(
 		`/api/manager/media-libraries/${id}/scan-schedule`,

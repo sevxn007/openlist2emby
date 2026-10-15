@@ -106,6 +106,12 @@ describe("media scan progress", () => {
 })
 
 describe("task subjects", () => {
+  it("labels selected-path scans as media imports", () => {
+    expect(getTaskSubject({ id: 8, type: "media.scan", subject: {
+      library_id: 42, library_name: "Shows", paths: ["/TV/Show"],
+    } }, (key, values) => `${key}:${values?.library}`)).toBe("tasks.subject.mediaImport:Shows")
+  })
+
 	it("uses the media scan label for historical runs without a library name", () => {
 		expect(
 		getTaskSubject(

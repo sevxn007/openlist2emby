@@ -82,6 +82,38 @@ func TestTaskRunCreateClaimAndComplete(t *testing.T) {
 	}
 }
 
+func TestTaskClaimsSerializeFullScansAndImportsPerLibrary(t *testing.T) {
+	now := time.Date(2026, 10, 15, 8, 0, 0, 0, time.UTC)
+	store := newTaskTestStore(t, now)
+	var runs []task.Run
+	for _, payload := range []string{`{"library_id":1}`, `{"library_id":1,"paths":["/TV/Show"]}`, `{"library_id":2}`} {
+		run, err := store.CreateRun(t.Context(), task.NewRun{Type: "media.scan", PayloadVersion: 1, Payload: json.RawMessage(payload), Trigger: task.TriggerManual, MaxAttempts: 1, AvailableAt: now})
+		if err != nil {
+			t.Fatal(err)
+		}
+		runs = append(runs, run)
+	}
+	first, err := store.ClaimRun(t.Context(), "first-worker", now, now.Add(time.Minute))
+	if err != nil || first == nil || first.ID != runs[0].ID {
+		t.Fatalf("first claim=%#v error=%v", first, err)
+	}
+	other, err := store.ClaimRun(t.Context(), "second-worker", now, now.Add(time.Minute))
+	if err != nil || other == nil || other.ID != runs[2].ID {
+		t.Fatalf("unrelated library claim=%#v error=%v", other, err)
+	}
+	blocked, err := store.ClaimRun(t.Context(), "third-worker", now, now.Add(time.Minute))
+	if err != nil || blocked != nil {
+		t.Fatalf("overlapping import claimed=%#v error=%v", blocked, err)
+	}
+	if err := store.CompleteRun(t.Context(), first.ID, "first-worker", json.RawMessage(`{}`), now); err != nil {
+		t.Fatal(err)
+	}
+	imported, err := store.ClaimRun(t.Context(), "first-worker", now, now.Add(time.Minute))
+	if err != nil || imported == nil || imported.ID != runs[1].ID {
+		t.Fatalf("queued import=%#v error=%v", imported, err)
+	}
+}
+
 func TestTaskScheduleStoresManualDefinition(t *testing.T) {
 	now := time.Date(2026, time.July, 22, 8, 0, 0, 0, time.UTC)
 	store := newTaskTestStore(t, now)

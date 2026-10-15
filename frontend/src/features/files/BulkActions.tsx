@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react"
-import { ArrowRight, Copy, FolderCheck, PencilLine, Trash2, X } from "lucide-react"
+import { ArrowRight, Copy, FolderCheck, LibraryBig, PencilLine, Trash2, X } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -31,9 +31,10 @@ import { DirectoryTree } from "./DirectoryTree"
 
 export type TransferKind = "move" | "copy"
 
-type ToolbarActionTone = "rename" | "copy" | "move" | "delete"
+type ToolbarActionTone = "rename" | "copy" | "move" | "delete" | "import"
 
 const toolbarActionToneClassNames: Record<ToolbarActionTone, string> = {
+  import: "text-primary hover:bg-primary/10 hover:text-primary",
   rename: "text-file-text hover:bg-file-text/10 hover:text-file-text",
   copy: "text-file-document hover:bg-file-document/10 hover:text-file-document",
   move: "text-file-audio hover:bg-file-audio/10 hover:text-file-audio",
@@ -47,6 +48,7 @@ export function BulkActionBar({
   onDelete,
   onMove,
   onRename,
+  onImport,
 }: {
   count: number
   onClear: () => void
@@ -54,6 +56,7 @@ export function BulkActionBar({
   onDelete: () => void
   onMove: () => void
   onRename: () => void
+  onImport?: () => void
 }) {
   const { t } = useI18n()
 
@@ -62,12 +65,13 @@ export function BulkActionBar({
       <div
         role="toolbar"
         aria-label={t("files.bulkActions")}
-        className="pointer-events-auto flex max-w-full animate-in items-center gap-1 rounded-xl border bg-popover/95 p-2 text-popover-foreground shadow-2xl backdrop-blur-md duration-150 fade-in slide-in-from-bottom-2"
+        className="pointer-events-auto flex max-w-full flex-wrap justify-center animate-in items-center gap-1 rounded-xl border bg-popover/95 p-2 text-popover-foreground shadow-2xl backdrop-blur-md duration-150 fade-in slide-in-from-bottom-2"
       >
         <span className="flex h-9 min-w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 px-2 text-sm font-semibold text-primary">
           {count}
         </span>
         <Separator orientation="vertical" className="mx-1 h-7" />
+        {onImport ? <ToolbarButton icon={LibraryBig} label={t("files.importMedia")} onClick={onImport} tone="import" /> : null}
         <ToolbarButton
           icon={PencilLine}
           label={t("files.batchRename")}

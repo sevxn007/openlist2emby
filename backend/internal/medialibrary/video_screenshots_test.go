@@ -28,6 +28,43 @@ func (s *fakeVideoScreenshotStore) ListMediaItems(_ context.Context, query ItemQ
 	return ItemPage{Items: s.items[start:end], Total: len(s.items)}, nil
 }
 
+func (s *fakeVideoScreenshotStore) GetMediaItem(_ context.Context, id int64) (Item, error) {
+	for _, item := range s.items {
+		if item.ID == id {
+			return item, nil
+		}
+	}
+	return Item{}, domain.ErrNotFound
+}
+
+func TestImportScreenshotsOnlyCaptureSelectedEpisodes(t *testing.T) {
+	seriesID, seasonID := int64(1), int64(2)
+	store := &fakeVideoScreenshotStore{items: []Item{
+		{ID: seriesID, Kind: KindSeries},
+		{ID: seasonID, Kind: KindSeason, ParentID: &seriesID},
+		{ID: 3, Kind: KindEpisode, ParentID: &seasonID, MediaPath: "/TV/Show.S01E01.mkv"},
+		{ID: 4, Kind: KindEpisode, ParentID: &seasonID, MediaPath: "/TV/Show.S01E02.mkv"},
+	}}
+	assets, err := NewAssetFiles(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	frames := &fakeVideoFrameExtractor{frame: testJPEG(t)}
+	handler := &TaskHandler{store: store, assets: assets, frames: frames}
+	result := ScanResult{}
+	tracker := newIndexTracker(&result)
+	tracker.incremental = true
+	tracker.record(1, false)
+	tracker.record(2, false)
+	tracker.record(4, true)
+	if err := handler.captureMissingVideoScreenshots(t.Context(), Library{ID: 1, ContentType: ContentTVShows, VideoScreenshotEnabled: true}, fakeVideoScreenshotOpenList{}, &result, task.Execution{}, tracker); err != nil {
+		t.Fatal(err)
+	}
+	if result.ScreenshotsGenerated != 1 || len(frames.calls) != 1 || frames.calls[0] != "video:/TV/Show.S01E02.mkv" || len(store.images) != 1 {
+		t.Fatalf("result=%#v calls=%v images=%v", result, frames.calls, store.images)
+	}
+}
+
 func (s *fakeVideoScreenshotStore) GetMediaItemImage(_ context.Context, itemID int64, imageType ImageType) (LocalImage, error) {
 	image := s.images[itemID][imageType]
 	if image.SHA256 == "" {
@@ -115,7 +152,7 @@ func TestAutomaticVideoScreenshotsRollUpFirstEpisodeFrame(t *testing.T) {
 
 	err = handler.captureMissingVideoScreenshots(t.Context(), Library{
 		ID: 9, ContentType: ContentTVShows, VideoScreenshotEnabled: true, VideoScreenshotPercent: 25,
-	}, fakeVideoScreenshotOpenList{}, &result, task.Execution{})
+	}, fakeVideoScreenshotOpenList{}, &result, task.Execution{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +189,7 @@ func TestAutomaticVideoScreenshotsContinueAfterCaptureFailure(t *testing.T) {
 
 	err = handler.captureMissingVideoScreenshots(t.Context(), Library{
 		ID: 7, ContentType: ContentMovies, VideoScreenshotEnabled: true, VideoScreenshotPercent: 10,
-	}, fakeVideoScreenshotOpenList{}, &result, task.Execution{})
+	}, fakeVideoScreenshotOpenList{}, &result, task.Execution{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

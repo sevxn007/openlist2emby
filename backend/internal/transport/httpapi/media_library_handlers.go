@@ -429,6 +429,24 @@ func (s *Server) handleDeleteMediaLibrary(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleScanMediaLibrary(w http.ResponseWriter, r *http.Request, session domain.Session) {
+	s.queueMediaLibraryScan(w, r, session, nil)
+}
+
+func (s *Server) handleImportMediaLibrary(w http.ResponseWriter, r *http.Request, session domain.Session) {
+	var input struct {
+		Paths []string `json:"paths"`
+	}
+	if !readJSON(w, r, &input) {
+		return
+	}
+	if len(input.Paths) == 0 {
+		writeError(w, http.StatusBadRequest, "at least one import path is required")
+		return
+	}
+	s.queueMediaLibraryScan(w, r, session, input.Paths)
+}
+
+func (s *Server) queueMediaLibraryScan(w http.ResponseWriter, r *http.Request, session domain.Session, paths []string) {
 	if !s.requireMediaLibraries(w) || !s.requireTaskManager(w) {
 		return
 	}
@@ -440,7 +458,7 @@ func (s *Server) handleScanMediaLibrary(w http.ResponseWriter, r *http.Request, 
 		writeMediaLibraryError(w, err)
 		return
 	}
-	payload, err := json.Marshal(medialibrary.ScanPayload{LibraryID: id})
+	payload, err := json.Marshal(medialibrary.ScanPayload{LibraryID: id, Paths: paths})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not create media scan")
 		return

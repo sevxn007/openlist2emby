@@ -107,10 +107,12 @@ import {
   removeFiles,
   RenameObject,
   renameFile,
+  TaskRun,
 } from "@/shared/api/manager"
 import { useI18n } from "@/shared/i18n/useI18n"
 import { formatBytes, formatDate } from "@/shared/lib/format"
 import { CreateFolderButton } from "./CreateFolderButton"
+import { MediaImportDialog } from "./MediaImportDialog"
 import { MediaSearchPanel } from "./MediaSearchPanel"
 import { supportsMediaSearch } from "./mediaNaming"
 import { BatchRenameDialog } from "./BatchRenameDialog"
@@ -163,6 +165,8 @@ interface PendingDeleteOperation {
 interface FileBrowserProps {
   openListBaseURL?: string
   listFilesFn?: ListFilesFn
+  mediaLibraryEnabled?: boolean
+  onTaskCreated?: (run: TaskRun) => void
 }
 
 interface FileRowData extends OpenListObject {
@@ -330,6 +334,8 @@ function getFileVisual(obj: OpenListObject): {
 export function FileBrowser({
   openListBaseURL,
   listFilesFn = listFiles,
+  mediaLibraryEnabled = false,
+  onTaskCreated,
 }: FileBrowserProps) {
   const { locale, t } = useI18n()
   const queryClient = useQueryClient()
@@ -341,6 +347,7 @@ export function FileBrowser({
   const [pendingDelete, setPendingDelete] =
     useState<PendingDeleteOperation | null>(null)
   const [batchRenameOpen, setBatchRenameOpen] = useState(false)
+  const [importSelection, setImportSelection] = useState<{ path: string; objects: OpenListObject[] } | null>(null)
   const selectionDragRef = useRef<SelectionDragState | null>(null)
   const suppressSelectionChangeRef = useRef(false)
   const ignoreNextDirectoryClickRef = useRef(false)
@@ -787,10 +794,23 @@ export function FileBrowser({
         }}
         onSubmit={(renameObjects) => batchRenameOperation.mutate(renameObjects)}
       />
+      {importSelection ? (
+        <MediaImportDialog
+          currentPath={importSelection.path}
+          objects={importSelection.objects}
+          onClose={() => setImportSelection(null)}
+          onCreated={(run) => {
+            onTaskCreated?.(run)
+            setImportSelection(null)
+            clearSelection()
+          }}
+        />
+      ) : null}
       {selectedItems.length > 0 ? (
         <BulkActionBar
           count={selectedItems.length}
           onClear={clearSelection}
+          onImport={mediaLibraryEnabled ? () => setImportSelection({ path: currentPath, objects: selectedItems }) : undefined}
           onCopy={() => openBulkTransfer("copy")}
           onDelete={() => openDelete(selectedItems, true)}
           onMove={() => openBulkTransfer("move")}
