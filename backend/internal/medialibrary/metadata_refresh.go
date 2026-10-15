@@ -72,7 +72,17 @@ func (s *Service) RefreshMetadataForUser(ctx context.Context, access UserAccess,
 	root.MetadataPriorityKey = strings.Join(metadata.Priority(settings), ",")
 	root.PreserveLock = true
 	updates[item.ID] = root
+	standalone := false
 	if item.Kind == KindSeries {
+		library, err := s.store.GetLibrary(ctx, item.LibraryID)
+		if err != nil {
+			return Item{}, err
+		}
+		// A standalone file is a synthetic episode, not the provider's
+		// actual first episode. Refresh only its series metadata.
+		standalone = strings.HasPrefix(item.Path, standaloneSeriesPrefix(library.RootPath))
+	}
+	if item.Kind == KindSeries && !standalone {
 		descendants, err := s.listDescendantsForUser(ctx, access, item.ID)
 		if err != nil {
 			return Item{}, err

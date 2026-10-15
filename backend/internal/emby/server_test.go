@@ -19,6 +19,7 @@ import (
 	"github.com/sevxn007/openlist2emby/backend/internal/emby"
 	"github.com/sevxn007/openlist2emby/backend/internal/medialibrary"
 	"github.com/sevxn007/openlist2emby/backend/internal/repository/sqlite"
+	"github.com/sevxn007/openlist2emby/backend/internal/task"
 	"github.com/sevxn007/openlist2emby/backend/internal/testidentity"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -29,9 +30,13 @@ type fakeMediaOpenList struct {
 	userAgent      string
 	resolveStarted chan struct{}
 	resolveRelease chan struct{}
+	entries        map[string][]medialibrary.RemoteEntry
 }
 
-func (f *fakeMediaOpenList) ListDirectory(context.Context, string, bool) ([]medialibrary.RemoteEntry, error) {
+func (f *fakeMediaOpenList) ListDirectory(_ context.Context, directory string, _ bool) ([]medialibrary.RemoteEntry, error) {
+	if entries, ok := f.entries[directory]; ok {
+		return entries, nil
+	}
 	return []medialibrary.RemoteEntry{}, nil
 }
 
@@ -933,6 +938,94 @@ func TestEmbyScopesTokensUsersLibrariesAndPlaybackState(t *testing.T) {
 		"/emby/Items/"+strconv.FormatInt(item.ID, 10)+"?api_key="+bobAuth.AccessToken, nil))
 	if disabledToken.Code != http.StatusUnauthorized {
 		t.Fatalf("disabled token status = %d body = %s", disabledToken.Code, disabledToken.Body.String())
+	}
+}
+
+func TestEmbyIndexesAndPlaysUnnumberedTVFile(t *testing.T) {
+	server, store, remote, _, _ := newEmbyTestServer(t)
+	library, err := store.CreateLibrary(t.Context(), medialibrary.LibraryInput{
+		Name: "TV", ContentType: medialibrary.ContentTVShows, RootPath: "/TV",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote.entries = map[string][]medialibrary.RemoteEntry{
+		"/TV":            {{Name: "Standalone", IsDir: true}},
+		"/TV/Standalone": {{Name: "Severance.mkv", Size: 1024}},
+	}
+	handler := medialibrary.NewTaskHandler(store, func(string, string) medialibrary.OpenList { return remote }, nil)
+	payload, err := handler.Prepare(t.Context(), json.RawMessage(`{"library_id":`+strconv.FormatInt(library.ID, 10)+`}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := handler.Run(t.Context(), payload, task.Execution{}); err != nil {
+		t.Fatal(err)
+	}
+
+	auth := authenticateEmby(t, server)
+	request := func(endpoint string, target any) {
+		t.Helper()
+		recorder := httptest.NewRecorder()
+		server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, endpoint+"&api_key="+auth.AccessToken, nil))
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("GET %s: status %d: %s", endpoint, recorder.Code, recorder.Body.String())
+		}
+		if err := json.Unmarshal(recorder.Body.Bytes(), target); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var views struct {
+		Items []struct {
+			ID             string `json:"Id"`
+			CollectionType string `json:"CollectionType"`
+		} `json:"Items"`
+	}
+	request("/emby/Users/1/Views?", &views)
+	viewID := ""
+	for _, view := range views.Items {
+		if view.CollectionType == "tvshows" {
+			viewID = view.ID
+		}
+	}
+	if viewID == "" {
+		t.Fatalf("TV view missing: %#v", views.Items)
+	}
+	type entry struct {
+		ID                string `json:"Id"`
+		ParentID          string `json:"ParentId"`
+		Type              string `json:"Type"`
+		Name              string `json:"Name"`
+		Path              string `json:"Path"`
+		SeriesID          string `json:"SeriesId"`
+		SeasonID          string `json:"SeasonId"`
+		IndexNumber       *int   `json:"IndexNumber"`
+		ParentIndexNumber *int   `json:"ParentIndexNumber"`
+		MediaSourceCount  int    `json:"MediaSourceCount"`
+	}
+	children := func(parentID, kind string) entry {
+		t.Helper()
+		var page struct {
+			Items []entry `json:"Items"`
+		}
+		request("/emby/Users/1/Items?ParentId="+parentID+"&IncludeItemTypes="+kind+"&Fields=MediaSources", &page)
+		if len(page.Items) != 1 {
+			t.Fatalf("children of %q: %#v", parentID, page.Items)
+		}
+		return page.Items[0]
+	}
+	series := children(viewID, "Series")
+	season := children(series.ID, "Season")
+	episode := children(season.ID, "Episode")
+	if series.Type != "Series" || series.Name != "Severance" || season.Type != "Season" || season.ParentID != series.ID || season.IndexNumber == nil || *season.IndexNumber != 1 || episode.Type != "Episode" || episode.ParentID != season.ID || episode.SeriesID != series.ID || episode.SeasonID != season.ID || episode.IndexNumber == nil || *episode.IndexNumber != 1 || episode.ParentIndexNumber == nil || *episode.ParentIndexNumber != 1 || episode.Path != "/TV/Standalone/Severance.mkv" || episode.MediaSourceCount != 1 {
+		t.Fatalf("Emby hierarchy: series=%#v season=%#v episode=%#v", series, season, episode)
+	}
+	var playback struct {
+		MediaSources  []json.RawMessage `json:"MediaSources"`
+		PlaySessionID string            `json:"PlaySessionId"`
+	}
+	request("/emby/Users/1/Items/"+episode.ID+"/PlaybackInfo?", &playback)
+	if playback.PlaySessionID == "" || len(playback.MediaSources) != 1 {
+		t.Fatalf("playback info = %#v", playback)
 	}
 }
 

@@ -3,6 +3,7 @@ package medialibrary
 import (
 	"context"
 	"encoding/json"
+	"path"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -391,6 +392,61 @@ func TestIndexTVShowsAppliesSeasonAndEpisodeMetadata(t *testing.T) {
 	episode := store.item(KindEpisode, files[0].Path)
 	if episode.TMDBID == nil || *episode.TMDBID != 301 || episode.Name != "Good News About Hell" || episode.Overview != "Episode one" || episode.ImageURL != "https://images.example/episode-1.jpg" || episode.PremiereDate != "2022-02-18" || episode.RuntimeTicks != 57*60*10_000_000 {
 		t.Fatalf("episode = %#v", episode)
+	}
+}
+
+func TestIndexTVShowsIndexesUnnumberedFilesAsIndependentSeries(t *testing.T) {
+	store := &tvIndexStore{}
+	metadata := &tvMetadataProvider{}
+	handler := &TaskHandler{store: store, metadata: metadata}
+	library := Library{ID: 1, RootPath: "/Shows", RootPaths: []string{"/Shows", "/Archive"}, ContentType: ContentTVShows}
+	files := []DiscoveredFile{
+		{Path: "/Shows/One/Severance.mkv", ScanRoot: "/Shows", Relative: "One/Severance.mkv", Name: "Severance.mkv"},
+		{Path: "/Archive/One/Severance.mkv", ScanRoot: "/Archive", Relative: "One/Severance.mkv", Name: "Severance.mkv"},
+	}
+	result := ScanResult{}
+	if err := handler.indexTVShows(t.Context(), library, 1, files, "synthetic-tmdb-key", newIndexTracker(&result), task.Execution{}); err != nil {
+		t.Fatal(err)
+	}
+	if result.Added != 6 || result.MetadataFailed != 0 || metadata.searches != 2 {
+		t.Fatalf("scan result = %#v, searches = %d", result, metadata.searches)
+	}
+	for _, file := range files {
+		seriesPath := standaloneSeriesPrefix(library.RootPath) + file.Path[1:]
+		series := store.item(KindSeries, seriesPath)
+		season := store.item(KindSeason, seriesPath+"/@season/1")
+		episode := store.item(KindEpisode, file.Path)
+		if series.ID == 0 || series.Name != "Severance" || series.TMDBID == nil || *series.TMDBID != 100 || series.MediaPath != path.Dir(file.Path) {
+			t.Fatalf("series for %q = %#v", file.Path, series)
+		}
+		if season.ID == 0 || season.ParentID == nil || *season.ParentID != series.ID || season.SeasonNumber == nil || *season.SeasonNumber != 1 || season.TMDBID != nil {
+			t.Fatalf("season for %q = %#v", file.Path, season)
+		}
+		if episode.ID == 0 || episode.ParentID == nil || *episode.ParentID != season.ID || episode.MediaPath != file.Path || episode.Container != "mkv" || episode.Name != "Severance" || episode.TMDBID != nil {
+			t.Fatalf("episode for %q = %#v", file.Path, episode)
+		}
+	}
+	if len(metadata.detailSeasons) != 2 || metadata.detailSeasons[0] != -1 || metadata.detailSeasons[1] != -1 {
+		t.Fatalf("unexpected season metadata requests: %v", metadata.detailSeasons)
+	}
+	firstSeriesID := store.item(KindSeries, standaloneSeriesPrefix(library.RootPath)+"Shows/One/Severance.mkv").ID
+	secondSeriesID := store.item(KindSeries, standaloneSeriesPrefix(library.RootPath)+"Archive/One/Severance.mkv").ID
+	if firstSeriesID == secondSeriesID {
+		t.Fatal("files under different roots share a series")
+	}
+	rescan := ScanResult{}
+	if err := handler.indexTVShows(t.Context(), library, 2, files, "synthetic-tmdb-key", newIndexTracker(&rescan), task.Execution{}); err != nil {
+		t.Fatal(err)
+	}
+	if rescan.Added != 0 || store.item(KindSeries, standaloneSeriesPrefix(library.RootPath)+"Shows/One/Severance.mkv").ID != firstSeriesID || store.item(KindSeries, standaloneSeriesPrefix(library.RootPath)+"Archive/One/Severance.mkv").ID != secondSeriesID {
+		t.Fatalf("rescan changed identities: %#v", rescan)
+	}
+	imported := ScanResult{}
+	if err := handler.indexTVShows(t.Context(), library, 2, files[:1], "synthetic-tmdb-key", newIndexTracker(&imported), task.Execution{}); err != nil {
+		t.Fatal(err)
+	}
+	if imported.Added != 0 || store.item(KindEpisode, files[0].Path).ID == 0 {
+		t.Fatalf("incremental import changed identity: %#v", imported)
 	}
 }
 

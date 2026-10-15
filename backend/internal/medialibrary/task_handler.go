@@ -288,25 +288,31 @@ func (h *TaskHandler) indexTVShowsWithSource(ctx context.Context, library Librar
 	metadataEnabled := h.metadataAvailable(ctx, apiKey)
 	for index, file := range files {
 		episode, ok := ParseEpisode(file.Name)
-		if !ok {
-			reportIndexing(execution, index+1, len(files))
-			continue
-		}
+		standalone := !ok
 		segments := strings.Split(file.Relative, "/")
 		seriesKey := episode.Series
-		if len(segments) > 1 {
+		if standalone {
+			episode = ParsedEpisode{Season: 1, Episode: 1}
+			seriesKey = file.Name
+		} else if len(segments) > 1 {
 			seriesKey = ParseSeriesFolder(segments[0], episode.Series)
 		}
 		seriesTitle := ParseTitle(seriesKey)
 		seriesKey = seriesTitle.Name
 		seriesPathKey := seriesKey
 		seriesPath := path.Join(library.RootPath, "@series", seriesPathKey)
+		if standalone {
+			// Keep each unnumbered file independent, even when titles match.
+			seriesPath = standaloneSeriesPrefix(library.RootPath) + strings.TrimPrefix(file.Path, "/")
+		}
 		scanRoot := file.ScanRoot
 		if scanRoot == "" {
 			scanRoot = library.RootPath
 		}
 		seriesMediaPath := scanRoot
-		if len(segments) > 1 {
+		if standalone {
+			seriesMediaPath = path.Dir(file.Path)
+		} else if len(segments) > 1 {
 			seriesMediaPath = path.Join(scanRoot, segments[0])
 		}
 		series, exists := seriesItems[seriesPath]
@@ -333,7 +339,7 @@ func (h *TaskHandler) indexTVShowsWithSource(ctx context.Context, library Librar
 					tracker.metadataFailed(series.ID)
 				}
 			}
-			if added {
+			if added && !standalone {
 				series, err = h.reassociateScannedItem(ctx, series, input, tracker)
 				if err != nil {
 					return err
@@ -350,7 +356,7 @@ func (h *TaskHandler) indexTVShowsWithSource(ctx context.Context, library Librar
 		if !exists {
 			seasonName := fmt.Sprintf("Season %d", episode.Season)
 			input := ItemInput{LibraryID: library.ID, ParentID: &series.ID, Kind: KindSeason, Path: seasonPath, MediaPath: path.Dir(file.Path), Name: seasonName, SortName: fmt.Sprintf("%04d", episode.Season), SeasonNumber: &episode.Season, ScanGeneration: generation}
-			if metadata, ok := seriesDetails[seriesPath]; ok {
+			if metadata, ok := seriesDetails[seriesPath]; ok && !standalone {
 				if seasonMetadata, found := findSeasonMetadata(metadata.Seasons, episode.Season); found {
 					applySeasonMetadata(&input, seasonMetadata)
 				}
@@ -362,7 +368,7 @@ func (h *TaskHandler) indexTVShowsWithSource(ctx context.Context, library Librar
 				return err
 			}
 			tracker.record(season.ID, added)
-			if metadataEnabled && resolvedID(series) > 0 && (season.MetadataRefreshNeeded || seriesDetails[seriesPath].ID > 0) {
+			if !standalone && metadataEnabled && resolvedID(series) > 0 && (season.MetadataRefreshNeeded || seriesDetails[seriesPath].ID > 0) {
 				if resolvedID(series) == 0 {
 					tracker.metadataFailed(season.ID)
 				} else if metadata, found := h.resolveSeason(ctx, apiKey, series, &episode.Season); found {
@@ -376,7 +382,7 @@ func (h *TaskHandler) indexTVShowsWithSource(ctx context.Context, library Librar
 					tracker.metadataFailed(season.ID)
 				}
 			}
-			if added {
+			if added && !standalone {
 				season, err = h.reassociateScannedItem(ctx, season, input, tracker)
 				if err != nil {
 					return err
@@ -389,6 +395,9 @@ func (h *TaskHandler) indexTVShowsWithSource(ctx context.Context, library Librar
 			}
 		}
 		episodeTitle := ParseEpisodeTitle(file.Name)
+		if standalone {
+			episodeTitle = seriesTitle.Name
+		}
 		if episodeTitle == "" {
 			episodeTitle = fmt.Sprintf("Episode %02d", episode.Episode)
 		}
@@ -413,7 +422,7 @@ func (h *TaskHandler) indexTVShowsWithSource(ctx context.Context, library Librar
 		}
 		tracker.record(item.ID, added)
 
-		if metadataEnabled && resolvedID(series) > 0 && (!item.MetadataLocalized || item.MetadataRefreshNeeded) && seasonEpisodePeople[seasonPath] == nil && !h.hasLocalPeople(ctx, item.ID) {
+		if !standalone && metadataEnabled && resolvedID(series) > 0 && (!item.MetadataLocalized || item.MetadataRefreshNeeded) && seasonEpisodePeople[seasonPath] == nil && !h.hasLocalPeople(ctx, item.ID) {
 			settings, settingsErr := h.sourceSettings(ctx, apiKey)
 			if settingsErr == nil {
 				people, peopleErr := h.sourceRegistry().SeasonEpisodeCredits(ctx, settings, domain.MediaCreditsQuery{Source: resolvedSource(series), ExternalID: resolvedID(series), MediaType: "tv", SeasonNumber: &episode.Season})
@@ -428,7 +437,7 @@ func (h *TaskHandler) indexTVShowsWithSource(ctx context.Context, library Librar
 		// refreshed until TMDB supplies an episode still, so a newly available
 		// cover can replace it without requiring a file change.
 		episodeMetadataRefreshNeeded := item.MetadataRefreshNeeded || episodeUsesSeriesBackdrop(item, series)
-		if metadataEnabled && !metadataFound && episodeMetadataRefreshNeeded {
+		if !standalone && metadataEnabled && !metadataFound && episodeMetadataRefreshNeeded {
 			if resolvedID(series) == 0 {
 				tracker.metadataFailed(item.ID)
 			} else if metadata, found := h.resolveSeason(ctx, apiKey, series, &episode.Season); found {
@@ -453,7 +462,7 @@ func (h *TaskHandler) indexTVShowsWithSource(ctx context.Context, library Librar
 				return err
 			}
 		}
-		if added {
+		if added && !standalone {
 			item, err = h.reassociateScannedItem(ctx, item, input, tracker)
 			if err != nil {
 				return err
@@ -468,6 +477,10 @@ func (h *TaskHandler) indexTVShowsWithSource(ctx context.Context, library Librar
 		reportIndexing(execution, index+1, len(files))
 	}
 	return h.localizeEpisodeJobs(ctx, episodeJobs, openListBaseURL, tracker, execution)
+}
+
+func standaloneSeriesPrefix(libraryRoot string) string {
+	return path.Join(libraryRoot, "@standalone") + "/"
 }
 
 // applyEpisodeBackdropFallback supplies the parent series backdrop only when

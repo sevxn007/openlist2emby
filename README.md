@@ -142,6 +142,12 @@ refreshes only the selected subtrees or file parents and adds or updates their
 media without removing existing items. Progress and retries are available in
 Tasks; full scans still reconcile deleted files.
 
+In TV libraries, video files without season/episode numbers are indexed as
+individual series with one playable episode. The series title is parsed from the
+filename and matched against TV metadata; provider season and episode details
+are not assigned to the unnumbered file. Emby clients see the normal
+Series -> Season 1 -> Episode hierarchy.
+
 The media library is disabled by default. Disabling it hides the library
 interface and returns HTTP 404 from media-library and Emby endpoints.
 
